@@ -1,0 +1,112 @@
+---
+title: "NYPD Shooting Incidents"
+author: "Thomas N"
+date: "2023-02-07"
+output: html_document
+---
+
+## Libraries Used For Analysis
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+library(tidyverse)
+library(lubridate)
+library(randomForest)
+```
+
+## Purpose of this report
+
+This report will examine and analyze the historic shooting incidences data set from the New York Police Department provided by the city of New York.  After analyzing the data and visualizing patterns, we will attempt to create a model that uses the variables to predict the likelihood of an incident resulting in a statistical murder.
+
+```{r get_NYPD_data}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+```
+
+```{r import_data}
+shooting_incidents <- read_csv(url_in)
+```
+### Tidying Data
+Variables such as latitude, longitude, X_COORD_CD, and Y_COORD_CD are removed because they won't be used for this analysis
+
+```{r tidy_data}
+shooting_incidents <- shooting_incidents %>%
+  select(-c(Latitude, Longitude, Lon_Lat, X_COORD_CD, Y_COORD_CD))
+```
+
+
+## Visualizing shooting incident frequency for each hour of the day and percentage breakdown of race for victims
+
+```{r graph_shooting_hour_freq}
+shooting_incidents$shooting_hour <- as.POSIXlt(shooting_incidents$OCCUR_TIME)$hour
+
+
+ggplot(shooting_incidents, aes(factor(shooting_hour), fill=BORO))+
+  geom_bar(position="stack", stat="count") +
+  labs(x = "Hour", y = "Count")
+```
+
+
+The number of incidents for each hour of the day was plotted, so we can see which times have the highest frequencies of incidents.  It appears that the majority of incidents occur in the late night and early morning, with the greatest frequency being at 11pm, 12am, and 1am.  The least number of incidents occurred during 9am, 8am, and 7am respectively.
+
+The stacked bar chart also allows us to examine the relative contribution of each borro to shooting incidents.  It is apparent that only 2 boros, Bronx and Brooklyn, make up over half of the shooting incidents.  Staten Island by far had the fewest number of incidents reported for any given time. This could suggest that areas such as the Bronx or Brooklyn may have higher crime rates, or stronger law enforcement presence.
+```{r transform_race_data}
+#count and calculate proportion of victims from each race
+count_vic_race <- shooting_incidents %>%
+  group_by(VIC_RACE) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(perc = `n`/sum(`n`))%>%
+  arrange(perc) %>%
+  mutate(labels = scales:: percent(perc))
+
+```
+
+```{r plot_vic_race}
+ggplot(count_vic_race, aes(x = "", y = perc, fill = VIC_RACE)) +
+  geom_col()+
+  coord_polar(theta = "y")
+```
+
+
+Examining the race of victims for each incident shows that the overwhelming majority of victims are identified as Black and Black Hispanic. American Indian/Alaskan Native made up the fewest percentage of incidents, but that can at least partially be attributed to the fewer number of American Indian/Alaskan Natives living in New York.  The proportion of Black people in the Bronx and Brooklyn may be higher relative to the other races.
+
+
+## Modeling Data
+```{r convert_factor}
+shooting_incidents$STATISTICAL_MURDER <- factor(shooting_incidents$STATISTICAL_MURDER_FLAG)
+shooting_incidents$BORO <- as.factor(shooting_incidents$BORO)
+shooting_incidents$VIC_SEX <- as.factor(shooting_incidents$VIC_SEX)
+shooting_incidents$VIC_RACE <- as.factor(shooting_incidents$VIC_RACE)
+shooting_incidents$VIC_AGE_GROUP <- as.factor(shooting_incidents$VIC_AGE_GROUP)
+shooting_incidents$shooting_hour <- as.factor(shooting_incidents$shooting_hour)
+
+```
+
+``` {r random_forest_model}
+library(randomForest)
+set.seed(42)
+
+rf_model <- randomForest(STATISTICAL_MURDER ~ BORO + VIC_AGE_GROUP + VIC_RACE + VIC_SEX + shooting_hour, data = shooting_incidents, proximity=TRUE)
+
+```
+
+```{r graph_rf}
+oob.error.data <- data.frame(
+  Trees = rep(1:nrow(rf_model$err.rate), times = 3),
+  Type = rep(c("OOB", "True", "False"), each=nrow(rf_model$err.rate)),
+  Error = c(rf_model$err.rate[, "OOB"],
+            rf_model$err.rate[, "TRUE"],
+            rf_model$err.rate[, "FALSE"]))
+
+
+ggplot(data = oob.error.data, aes(x = Trees, y = Error)) +
+  geom_line(aes(color = Type))
+```
+
+A random forest model was chosen to predict the likelihood of an incident being flagged as a statistical murder.  Variables such as boro, victim race, victim age group, and victim sex were converted to factors, so they could be used to split decision trees.  The model was extremely accurate in predicting when incidents didn't result in murders with error rate of only 0.6%, but performed extremely poorly at predicting incidents resulting in murders with error rate of 98.6%.  Upon further examination, it is clear that the data set is not balanced, as the majority of incidents don't result in murder.
+
+
+## Sources of Bias
+There are many potential sources of bias in this report, starting with how policing practices might differ between boros, which could therefore lead to a higher number of incidents in some neighborhoods.  The survivorship bias could also be present, since only reported incidents appear in this data set, and there could be many more incidents that have gone unreported.  Confirmation bias could have been another source since I had preconceived notions about what I expected to find.
+
+## Future Analysis
+This report served as a good starting point for understanding the distribution of shooting incidents throughout New York City.  Future analysis that can be done is how the distribution of wealth and social services throughout the city is correlated with shooting incidents.
